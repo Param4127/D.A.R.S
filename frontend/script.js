@@ -1,7 +1,7 @@
 'use strict';
 
 // ── Config ───────────────────────────────────────────
-const API_BASE        = 'http://192.168.1.33:8000';
+const API_BASE        = 'https://fdfbx-103-240-35-238.run.pinggy-free.link';
 const FRAME_INTERVAL  = 200;   // faster: ~5 frames/sec
 const CAPTURE_W       = 416;
 const CAPTURE_H       = 234;

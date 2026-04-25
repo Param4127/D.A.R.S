@@ -205,7 +205,10 @@ function toggleSound() {
 // ── Backend health ───────────────────────────────────
 async function checkBackend() {
   try {
-    const r = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${API_BASE}/health`, { 
+      signal: AbortSignal.timeout(3000),
+      headers: { "Bypass-Tunnel-Reminder": "true" }
+    });
     if (r.ok) { setStatus('online', 'ONLINE'); return true; }
   } catch (_) {}
   setStatus('offline', 'OFFLINE');
@@ -299,6 +302,7 @@ async function sendFrame() {
     form.append('file', blob, 'frame.jpg');
     const res = await fetch(`${API_BASE}/predict?annotate=false`, {
       method: 'POST', body: form, signal: AbortSignal.timeout(5000),
+      headers: { "Bypass-Tunnel-Reminder": "true" }
     });
     if (res.ok) {
       const data = await res.json();
@@ -622,7 +626,10 @@ function updateRiskRing(ratio) {
 // ── Stats from backend ────────────────────────────────
 async function pollStats() {
   try {
-    const r = await fetch(`${API_BASE}/stats`, { signal: AbortSignal.timeout(2000) });
+    const r = await fetch(`${API_BASE}/stats`, { 
+      signal: AbortSignal.timeout(2000),
+      headers: { "Bypass-Tunnel-Reminder": "true" }
+    });
     const d = await r.json();
     tileFrames.textContent  = d.total_frames;
     tileAwake.textContent   = `${d.awake_percent}%`;
@@ -654,7 +661,13 @@ function addLog(state, message) {
 
 // ── Reset session ─────────────────────────────────────
 async function resetSession() {
-  try { await fetch(`${API_BASE}/reset`, { method: 'POST', signal: AbortSignal.timeout(3000) }); } catch (_) {}
+  try { 
+    await fetch(`${API_BASE}/reset`, { 
+      method: 'POST', 
+      signal: AbortSignal.timeout(3000),
+      headers: { "Bypass-Tunnel-Reminder": "true" }
+    }); 
+  } catch (_) {}
   drowsyStartTime = null; currentLevel = 'none'; graceCount = 0;
   fpsHistory = []; lastAlertTime = 0; frontHistory = [];
   updateFPS(0); updateRiskRing(0);

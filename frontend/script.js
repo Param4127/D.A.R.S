@@ -1,7 +1,7 @@
 'use strict';
 
 // ── Config ───────────────────────────────────────────
-const API_BASE        = 'http://127.0.0.1:8000';
+const API_BASE        = 'http://192.168.1.33:8000';
 const FRAME_INTERVAL  = 200;   // faster: ~5 frames/sec
 const CAPTURE_W       = 416;
 const CAPTURE_H       = 234;

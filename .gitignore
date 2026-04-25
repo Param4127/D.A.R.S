@@ -1,0 +1,20 @@
+# Mac OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+venv/
+env/
+
+# YOLOv8 & Datasets
+runs/
+yolov8n.pt
+Drowsiness Detection.v1-raw-images.yolov8/
+data.yaml
+_dars_data.yaml
+
+# Keep the backend model weights (if you want the repo to be runnable out of the box)
+# but ignore the massive training folders above.

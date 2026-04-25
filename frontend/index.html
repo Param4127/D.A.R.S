@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="D.A.R.S — Driver Alert & Recognition System. Real-time AI-powered driver safety monitoring." />
+  <title>D.A.R.S — Driver Alert & Recognition System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Ambient background layers -->
+  <div class="bg-particles" id="bgParticles"></div>
+  <div class="bg-grid"></div>
+  <div class="bg-vignette"></div>
+  <div class="scanline-sweep"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">
+          <div class="logo-rings">
+            <div class="ring r1"></div>
+            <div class="ring r2"></div>
+            <div class="ring r3"></div>
+          </div>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="5.5" stroke="currentColor" stroke-width="0.8" opacity="0.5"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <span class="logo-title">D.A.R.S</span>
+          <span class="logo-sub">Driver Alert &amp; Recognition System</span>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div class="hud-tick" title="System time">
+          <span class="hud-tick-label">SYS</span>
+          <span class="hud-tick-val" id="sysClock">--:--:--</span>
+        </div>
+        <div class="hud-sep"></div>
+        <div class="hud-tick">
+          <span class="hud-tick-label">VER</span>
+          <span class="hud-tick-val">4.0.1</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="header-status">
+          <div class="status-dot" id="statusDot"></div>
+          <span class="status-label" id="statusLabel">OFFLINE</span>
+        </div>
+      </div>
+    </div>
+    <div class="header-scan-bar"></div>
+  </header>
+
+  <!-- Main layout -->
+  <main class="main">
+
+    <!-- Camera panel -->
+    <section class="panel panel-camera" id="panelCamera">
+      <div class="panel-header">
+        <h1 class="panel-title"><span class="slash">//</span> Live Feed</h1>
+        <div class="panel-badge" id="liveBadge"><span class="badge-dot"></span>STANDBY</div>
+      </div>
+
+      <div class="camera-container" id="cameraContainer">
+        <!-- HUD corner brackets -->
+        <div class="hud-corner tl"></div>
+        <div class="hud-corner tr"></div>
+        <div class="hud-corner bl"></div>
+        <div class="hud-corner br"></div>
+        <!-- Crosshair target -->
+        <div class="cam-crosshair" id="camCrosshair">
+          <div class="ch-h"></div>
+          <div class="ch-v"></div>
+          <div class="ch-ring"></div>
+        </div>
+
+        <video id="webcamVideo" autoplay muted playsinline></video>
+        <img id="annotatedFrame" alt="Annotated frame" style="display:none;" />
+        <canvas id="overlayCanvas"></canvas>
+
+        <!-- Loading spinner -->
+        <div class="camera-loader" id="cameraLoader">
+          <div class="loader-rings">
+            <div class="lr lr1"></div>
+            <div class="lr lr2"></div>
+            <div class="lr lr3"></div>
+          </div>
+          <span class="loader-text">INITIALIZING CAMERA...</span>
+          <div class="loader-progress"><div class="loader-bar"></div></div>
+        </div>
+
+        <!-- Alert banner -->
+        <div class="alert-banner" id="alertBanner">
+          <div class="alert-stripe"></div>
+          <div class="alert-icon" id="alertIcon">⚠</div>
+          <div class="alert-text">
+            <strong id="alertTitle">DROWSINESS DETECTED</strong>
+            <span id="alertMsg">Please pull over safely</span>
+          </div>
+          <div class="alert-pulse-ring"></div>
+        </div>
+
+        <!-- State pill -->
+        <div class="state-pill" id="statePill">––</div>
+
+        <!-- Scan line animation -->
+        <div class="cam-scan-line"></div>
+      </div>
+
+      <!-- Status message bar -->
+      <div class="status-msg-bar" id="statusMsgBar">
+        <span class="status-msg-icon" id="statusMsgIcon">🟢</span>
+        <div class="status-msg-inner">
+          <span class="status-msg-text" id="statusMsgText">SYSTEM READY — Start monitoring to begin.</span>
+        </div>
+        <div class="status-ticker">DARS v4 · AI MONITORING · REAL-TIME</div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <button class="btn btn-primary" id="btnStart">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <span>Start</span>
+        </button>
+        <button class="btn btn-secondary" id="btnStop" disabled>
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+          <span>Stop</span>
+        </button>
+        <button class="btn btn-ghost" id="btnReset">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          <span>Reset</span>
+        </button>
+        <button class="btn btn-sound" id="btnSound">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="soundIcon">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+          </svg>
+          <span>Sound ON</span>
+        </button>
+        <button class="btn btn-ghost btn-test" id="btnTestSound" title="Test the alert beep">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 1 0 8"/><path d="M14 10a2 2 0 0 1 0 4"/><path d="M7 8v8"/><path d="M3 10v4"/></svg>
+          <span>Test</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Stats panel -->
+    <aside class="panel panel-stats">
+
+      <!-- Risk ring -->
+      <div class="stat-card risk-card">
+        <div class="stat-label"><span class="slash">//</span> Drowsiness Risk Index</div>
+        <div class="risk-ring-wrap">
+          <!-- Decorative outer arcs -->
+          <div class="ring-deco rd1"></div>
+          <div class="ring-deco rd2"></div>
+          <svg class="risk-ring" viewBox="0 0 120 120">
+            <defs>
+              <linearGradient id="ringGradSafe" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#00ff88"/>
+                <stop offset="100%" stop-color="#00cfaa"/>
+              </linearGradient>
+              <linearGradient id="ringGradWarn" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#ffb800"/>
+                <stop offset="100%" stop-color="#ff8c00"/>
+              </linearGradient>
+              <linearGradient id="ringGradDanger" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#ff2244"/>
+                <stop offset="100%" stop-color="#ff0066"/>
+              </linearGradient>
+              <!-- Tick marks -->
+            </defs>
+            <circle class="ring-bg"   cx="60" cy="60" r="50"/>
+            <circle class="ring-track" cx="60" cy="60" r="50"/>
+            <circle class="ring-fill" id="ringFill" cx="60" cy="60" r="50"
+                    stroke-dasharray="314" stroke-dashoffset="314"/>
+            <!-- Tick marks at 0, 25, 50, 75, 100% -->
+            <line x1="60" y1="4"  x2="60" y2="10" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" transform="rotate(0 60 60)"/>
+            <line x1="60" y1="4"  x2="60" y2="10" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" transform="rotate(90 60 60)"/>
+            <line x1="60" y1="4"  x2="60" y2="10" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" transform="rotate(180 60 60)"/>
+            <line x1="60" y1="4"  x2="60" y2="10" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" transform="rotate(270 60 60)"/>
+          </svg>
+          <div class="risk-center">
+            <span class="risk-percent" id="riskPercent">0%</span>
+            <span class="risk-sub"     id="riskSub">safe</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alert level indicator -->
+      <div class="alert-level-row">
+        <div class="level-pill level-safe"     id="lvlSafe"><span class="lp-icon">✓</span><span>SAFE</span></div>
+        <div class="level-pill level-warning"  id="lvlWarning"><span class="lp-icon">⚡</span><span>WARN</span></div>
+        <div class="level-pill level-critical" id="lvlCritical"><span class="lp-icon">🚨</span><span>CRIT</span></div>
+      </div>
+
+      <!-- Stats grid -->
+      <div class="stat-grid">
+        <div class="stat-tile">
+          <div class="tile-top">
+            <svg class="tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </div>
+          <span class="tile-val" id="tileFrames">0</span>
+          <span class="tile-key">Frames</span>
+          <div class="tile-glow"></div>
+        </div>
+        <div class="stat-tile tile-awake">
+          <div class="tile-top">
+            <svg class="tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <span class="tile-val" id="tileAwake">0%</span>
+          <span class="tile-key">Awake</span>
+          <div class="tile-glow"></div>
+        </div>
+        <div class="stat-tile tile-drowsy">
+          <div class="tile-top">
+            <svg class="tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>
+          </div>
+          <span class="tile-val" id="tileDrowsy">0%</span>
+          <span class="tile-key">Drowsy</span>
+          <div class="tile-glow"></div>
+        </div>
+        <div class="stat-tile">
+          <div class="tile-top">
+            <svg class="tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <span class="tile-val" id="tileElapsed">0s</span>
+          <span class="tile-key">Elapsed</span>
+          <div class="tile-glow"></div>
+        </div>
+      </div>
+
+      <!-- FPS bar -->
+      <div class="fps-bar">
+        <span class="fps-label">FPS</span>
+        <div class="fps-track">
+          <div class="fps-fill" id="fpsFill"></div>
+          <div class="fps-ticks">
+            <span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+        <span class="fps-val" id="fpsVal">0</span>
+      </div>
+
+      <!-- Detection log -->
+      <div class="log-section">
+        <div class="log-header">
+          <span><span class="slash">//</span> Event Log</span>
+          <button class="btn-clear" id="btnClearLog">Clear</button>
+        </div>
+        <ul class="log-list" id="logList">
+          <li class="log-item log-empty">Awaiting monitor start…</li>
+        </ul>
+      </div>
+
+    </aside>
+  </main>
+
+  <!-- Clock script -->
+  <script>
+    setInterval(() => {
+      document.getElementById('sysClock').textContent = new Date().toLocaleTimeString('en-US',{hour12:false});
+    }, 1000);
+  </script>
+  <script src="script.js"></script>
+</body>
+</html>

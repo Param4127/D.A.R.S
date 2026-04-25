@@ -538,8 +538,6 @@ body.state-critical { animation: body-pulse 0.7s ease-in-out infinite; }
 .btn-ghost { background: transparent; color: var(--text-muted); border-color: var(--border); }
 .btn-ghost:hover:not(:disabled) { border-color: var(--border-accent); color: var(--text-secondary); }
 
-.btn-test { }
-
 .btn-sound {
   background: rgba(0,255,157,0.06); color: var(--green);
   border-color: rgba(0,255,157,0.22); margin-left: auto;

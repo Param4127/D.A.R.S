@@ -1,7 +1,7 @@
 'use strict';
 
 // ── Config ───────────────────────────────────────────
-const API_BASE        = 'https://fdfbx-103-240-35-238.run.pinggy-free.link';
+const API_BASE        = 'https://dars-backend-production.up.railway.app';
 const FRAME_INTERVAL  = 200;   // faster: ~5 frames/sec
 const CAPTURE_W       = 416;
 const CAPTURE_H       = 234;

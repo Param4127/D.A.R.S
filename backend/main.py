@@ -44,25 +44,25 @@ CLASS_NAMES = ["awake", "drowsy"]
 model = None
 
 
-print(f"[DARS] Checking model at: {MODEL_PATH}")
+def load_model():
+    global model
+    print(f"[DARS] Checking model at: {MODEL_PATH}")
 
-if not MODEL_PATH.exists():
-    raise RuntimeError(
-        f"[DARS ERROR] Model not found at {MODEL_PATH}. "
-        "Make sure best.pt exists inside backend/model/ and is committed to GitHub."
-    )
+    if not MODEL_PATH.exists():
+        raise RuntimeError(
+            f"[DARS ERROR] Model not found at {MODEL_PATH}. "
+            "Make sure best.pt exists inside backend/model/"
+        )
 
-try:
+    print("[DARS] Loading YOLO model...")
     model = YOLO(str(MODEL_PATH))
-    model.to("cpu")  # force CPU for Railway stability
+    model.to("cpu")
     print("[DARS] Model loaded successfully.")
-except Exception as e:
-    print("[DARS ERROR] Model loading failed:", e)
-    raise e
 
 @app.on_event("startup")
 async def startup_event():
     print("[DARS] Backend starting...")
+    load_model()
 
 
 # ──────────────────────────────────────────────

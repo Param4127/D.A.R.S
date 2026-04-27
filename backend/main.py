@@ -46,22 +46,22 @@ model = None
 
 def load_model():
     global model
-    print(f"[DARS] Checking model at: {MODEL_PATH}")
-
     if not MODEL_PATH.exists():
-        raise RuntimeError(
-            f"[DARS ERROR] Model not found at {MODEL_PATH}. "
-            "Make sure best.pt exists inside backend/model/"
+        raise FileNotFoundError(
+            f"\n\n[DARS] ERROR — Trained model not found at: {MODEL_PATH}\n"
+            "  Please follow these steps to set up the model:\n"
+            "  1. Copy data.yaml to the project root (next to train.py)\n"
+            "  2. Run:  python train.py\n"
+            "  3. Copy runs/detect/dars_drowsiness/weights/best.pt  →  backend/model/best.pt\n"
+            "  4. Restart the server\n"
         )
-
-    print("[DARS] Loading YOLO model...")
+    print(f"[DARS] Loading model from: {MODEL_PATH}")
     model = YOLO(str(MODEL_PATH))
-    model.to("cpu")
     print("[DARS] Model loaded successfully.")
+
 
 @app.on_event("startup")
 async def startup_event():
-    print("[DARS] Backend starting...")
     load_model()
 
 
@@ -137,8 +137,13 @@ async def root():
 
 
 @app.get("/health", tags=["Health"])
-def health():
-    return {"status": "ok"}
+async def health():
+    return {
+        "status": "ok",
+        "model_loaded": model is not None,
+        "model_path": str(MODEL_PATH),
+        "model_exists": MODEL_PATH.exists(),
+    }
 
 
 @app.post("/predict", tags=["Inference"])
@@ -162,7 +167,7 @@ async def predict(
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
     # ── Inference ──
-    results = model(frame, conf=0.35, verbose=False)
+    results = model(frame, conf=0.25, verbose=False)
 
     # ── Parse detections ──
     detections = []

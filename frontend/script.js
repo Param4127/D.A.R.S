@@ -1,24 +1,18 @@
 'use strict';
 
 // ── Config ───────────────────────────────────────────
-const API_BASE        = 'https://dars-backend-production.up.railway.app';
-const FRAME_INTERVAL  = 200;   // faster: ~5 frames/sec
+const API_BASE        = 'http://127.0.0.1:8000';
+const FRAME_INTERVAL  = 350;
 const CAPTURE_W       = 416;
 const CAPTURE_H       = 234;
 const CAPTURE_QUALITY = 0.5;
 const LOG_MAX         = 60;
-const WARN_AFTER      = 1200;  // warn after 1.2s of drowsiness
-const ALERT_AFTER     = 2500;  // alert after 2.5s
-const CRITICAL_AFTER  = 4000;  // critical after 4s
-const ALERT_COOLDOWN  = 3500;
-const GRACE_FRAMES    = 6;     // slightly faster recovery
-const FRONT_WINDOW    = 10;    // smaller window = faster risk updates
-
-// ── Detection quality filters ──
-// Balanced: low enough to detect normal faces, high enough to ignore
-// tiny far-away / very uncertain detections.
-const MIN_CONFIDENCE  = 0.42;  // accept detections above 42% confidence
-const MIN_FACE_AREA   = 0.022; // face must cover 2.2% of frame (close enough)
+const WARN_AFTER      = 1500;
+const ALERT_AFTER     = 3000;
+const CRITICAL_AFTER  = 5000;
+const ALERT_COOLDOWN  = 4000;
+const GRACE_FRAMES    = 3;
+const FRONT_WINDOW    = 10;  // rolling window for frontend risk %
 
 // ── DOM ──────────────────────────────────────────────
 const video           = document.getElementById('webcamVideo');
@@ -71,14 +65,10 @@ let lastDetections  = [];
 
 // Detection state
 let soundEnabled    = true;
+let lastAlertTime   = 0;
 let drowsyStartTime = null;
 let currentLevel    = 'none';
 let graceCount      = 0;
-
-// Per-tier sound cooldown timers (independent so high alert never blocked by low)
-const SOUND_COOLDOWNS = { low: 8000, mid: 5000, high: 3000 };
-const lastSoundTime   = { low: 0,    mid: 0,    high: 0    };
-let lastAlertTime     = 0;  // kept for checkDrowsiness compatibility
 
 // ─────────────────────────────────────────────────────
 //  FIX 1: Frontend rolling window — tracks actual frames
@@ -100,70 +90,90 @@ function computeFrontRatio(dominant) {
 }
 
 // ─────────────────────────────────────────────────────
-//  AUDIO SYSTEM
-//  Creates a FRESH AudioContext for every beep.
-//  This is the most reliable method — no suspend/resume
-//  issues, no stale context, works every time after
-//  the user has clicked anything on the page.
+//  FIX 2: AudioContext — created ONCE on first user
+//  gesture, then reused.  playAlert() always resumes
+//  the context before scheduling tones so it works
+//  even after Chrome auto-suspends it.
 // ─────────────────────────────────────────────────────
+let audioCtx = null;
 
-// Tracks whether user has interacted (required for AudioContext creation)
-let userHasInteracted = false;
-document.addEventListener('click', () => { userHasInteracted = true; }, { once: true });
-
-// initAudio — call on Start button click to mark interaction
-function initAudio() { userHasInteracted = true; }
-
-// playBeeps — creates a fresh AudioContext each call (100% reliable)
-function playBeeps(freq, count, intervalSec, gain, durSec) {
-  if (!soundEnabled || !userHasInteracted) return;
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const now = ctx.currentTime;
-    for (let i = 0; i < count; i++) {
-      const t = now + i * intervalSec;
-      // main tone
-      const osc = ctx.createOscillator();
-      const g   = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(freq, t);
-      g.gain.setValueAtTime(0.001, t);
-      g.gain.linearRampToValueAtTime(gain, t + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.001, t + durSec);
-      osc.connect(g); g.connect(ctx.destination);
-      osc.start(t); osc.stop(t + durSec + 0.05);
-      // sub-tone (half freq, softer)
-      const osc2 = ctx.createOscillator();
-      const g2   = ctx.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(freq / 2, t);
-      g2.gain.setValueAtTime(0.001, t);
-      g2.gain.linearRampToValueAtTime(gain * 0.3, t + 0.01);
-      g2.gain.exponentialRampToValueAtTime(0.001, t + durSec);
-      osc2.connect(g2); g2.connect(ctx.destination);
-      osc2.start(t); osc2.stop(t + durSec + 0.05);
+function ensureAudio() {
+  if (!audioCtx || audioCtx.state === 'closed') {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.warn('[DARS] AudioContext creation failed:', e);
+      return null;
     }
-    // auto-close context after all beeps finish
-    setTimeout(() => ctx.close(), (count * intervalSec + durSec + 0.2) * 1000);
-  } catch (e) { console.warn('[DARS] Audio error:', e); }
+  }
+  return audioCtx;
 }
 
-// playAlert — maps tier name to beep parameters
-function playAlert(tier = 'mid') {
+// Call once inside a click handler so browsers allow it
+function initAudio() {
+  const ctx = ensureAudio();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
+}
+
+// ─────────────────────────────────────────────────────
+//  FIX 3: playAlert — schedules 3 sharp beeps.
+//  Always calls resume() first (required after Chrome
+//  suspends the context), then schedules tones.
+// ─────────────────────────────────────────────────────
+function playAlert(level = 'alert') {
   if (!soundEnabled) return;
-  //       freq  count interval  gain   dur
-  const T = {
-    low:      [520,  1, 0.40, 0.15, 0.25],
-    mid:      [820,  3, 0.28, 0.30, 0.22],
-    high:     [1100, 5, 0.18, 0.55, 0.18],
-    warning:  [660,  2, 0.30, 0.25, 0.20],
-    alert:    [820,  3, 0.28, 0.35, 0.22],
-    critical: [1100, 5, 0.18, 0.55, 0.16],
-  };
-  const p = T[tier] || T.mid;
-  playBeeps(...p);
-}
 
+  const ctx = ensureAudio();
+  if (!ctx) return;
+
+  // Frequencies and patterns per severity
+  const configs = {
+    warning:  { freq: 660,  count: 2, interval: 0.3,  gainPeak: 0.25, dur: 0.2  },
+    alert:    { freq: 900,  count: 3, interval: 0.25, gainPeak: 0.35, dur: 0.22 },
+    critical: { freq: 1100, count: 5, interval: 0.18, gainPeak: 0.5,  dur: 0.16 },
+  };
+  const cfg = configs[level] || configs.alert;
+
+  ctx.resume().then(() => {
+    try {
+      const now = ctx.currentTime;
+      for (let i = 0; i < cfg.count; i++) {
+        const t = now + i * cfg.interval;
+
+        // Main oscillator
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(cfg.freq, t);
+        // quick attack, fast decay
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(cfg.gainPeak, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + cfg.dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + cfg.dur + 0.01);
+
+        // Sub-tone for richness
+        const osc2  = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(cfg.freq * 0.5, t);
+        gain2.gain.setValueAtTime(0, t);
+        gain2.gain.linearRampToValueAtTime(cfg.gainPeak * 0.4, t + 0.01);
+        gain2.gain.exponentialRampToValueAtTime(0.001, t + cfg.dur);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.start(t);
+        osc2.stop(t + cfg.dur + 0.01);
+      }
+    } catch (e) {
+      console.warn('[DARS] playAlert error:', e);
+    }
+  }).catch(e => console.warn('[DARS] AudioContext resume failed:', e));
+}
 
 function speakAlert(msg) {
   if (!soundEnabled) return;
@@ -205,10 +215,7 @@ function toggleSound() {
 // ── Backend health ───────────────────────────────────
 async function checkBackend() {
   try {
-    const r = await fetch(`${API_BASE}/health`, { 
-      signal: AbortSignal.timeout(3000),
-      headers: { "Bypass-Tunnel-Reminder": "true" }
-    });
+    const r = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
     if (r.ok) { setStatus('online', 'ONLINE'); return true; }
   } catch (_) {}
   setStatus('offline', 'OFFLINE');
@@ -302,7 +309,6 @@ async function sendFrame() {
     form.append('file', blob, 'frame.jpg');
     const res = await fetch(`${API_BASE}/predict?annotate=false`, {
       method: 'POST', body: form, signal: AbortSignal.timeout(5000),
-      headers: { "Bypass-Tunnel-Reminder": "true" }
     });
     if (res.ok) {
       const data = await res.json();
@@ -315,108 +321,34 @@ async function sendFrame() {
   } catch (_) {}
 }
 
-// ─────────────────────────────────────────────────────
-//  GRADUATED SOUND SYSTEM
-//  Each tier has its own independent cooldown so a high
-//  alert is NEVER blocked by a recent low alert.
-//
-//  30–49% → LOW  : 1 soft beep  (once every 8 s)
-//  50–79% → MID  : 3 beeps      (once every 5 s)
-//  80–100% → HIGH : 5 loud beeps + voice (once every 3 s)
-// ─────────────────────────────────────────────────────
-function triggerGraduatedSound(ratio) {
-  if (!soundEnabled) return;
-  const now = Date.now();
-  const pct  = Math.round(ratio * 100);
-
-  // ── TIER 3 — HIGH (70%+): 5 urgent beeps + voice every 3s ──
-  if (pct >= 70) {
-    if (now - lastSoundTime.high > SOUND_COOLDOWNS.high) {
-      playAlert('high');
-      speakAlert('Danger! High drowsiness detected. Stop the vehicle now!');
-      lastSoundTime.high = now;
-      lastAlertTime = now;
-    }
-
-  // ── TIER 2 — MID (50–69%): 3 beeps + voice every 5s ──
-  } else if (pct >= 50) {
-    if (now - lastSoundTime.mid > SOUND_COOLDOWNS.mid) {
-      playAlert('mid');
-      speakAlert('Warning! You are getting drowsy. Please stay alert.');
-      lastSoundTime.mid = now;
-      lastAlertTime = now;
-    }
-
-  // ── TIER 1 — LOW (40–49%): 1 soft beep every 8s, no voice ──
-  } else if (pct >= 40) {
-    if (now - lastSoundTime.low > SOUND_COOLDOWNS.low) {
-      playAlert('low');
-      lastSoundTime.low = now;
-    }
-  }
-}
-
 // ── Handle prediction ────────────────────────────────
-// ──────────────────────────────────────────────────────
-//  getValidDominant — filters out far/small/uncertain
-//  detections before feeding the rolling window.
-//  Returns 'drowsy' | 'awake' | 'none'
-// ──────────────────────────────────────────────────────
-// Face memory: if no valid face found, reuse last known state
-// for up to FACE_MEMORY_FRAMES frames before resetting to 'none'
-const FACE_MEMORY_FRAMES = 4;
-let lastValidDominant = 'none';
-let noFaceCount = 0;
-
-function getValidDominant(detections) {
-  const valid = detections.filter(det => {
-    if (det.confidence < MIN_CONFIDENCE) return false;
-    const bw   = (det.bbox.x2 - det.bbox.x1) / CAPTURE_W;
-    const bh   = (det.bbox.y2 - det.bbox.y1) / CAPTURE_H;
-    return (bw * bh) >= MIN_FACE_AREA;
-  });
-
-  if (valid.length > 0) {
-    // Good detection — update memory and reset miss counter
-    const drowsyCount = valid.filter(d => d.label === 'drowsy').length;
-    lastValidDominant = drowsyCount > valid.length / 2 ? 'drowsy' : 'awake';
-    noFaceCount = 0;
-    return lastValidDominant;
-  }
-
-  // No valid detection this frame — use face memory for a few frames
-  noFaceCount++;
-  if (noFaceCount <= FACE_MEMORY_FRAMES && lastValidDominant !== 'none') {
-    return lastValidDominant;  // hold last known state
-  }
-
-  // Too many consecutive misses — genuinely no face
-  lastValidDominant = 'none';
-  return 'none';
-}
-
 function handlePrediction(data) {
-  const rawDetections = data.detections || [];
+  const dominant   = data.dominant   || 'none';
+  const detections = data.detections || [];
 
-  // Use filtered dominant (ignores far/small/low-confidence faces)
-  const dominant    = getValidDominant(rawDetections);
+  // ── FIX: Compute risk ratio correctly (0.0–1.0) ──
   const drowsyRatio = computeFrontRatio(dominant);
 
-  // Draw all detected boxes (visual feedback even for filtered ones)
-  drawDetections(rawDetections);
+  drawDetections(detections);
 
-  // State pill: show raw dominant for display, but logic uses filtered
-  // State pill: show raw dominant for display
-  const rawDominant = data.dominant || 'none';
-  statePill.textContent = rawDominant === 'none' ? 'NO FACE' : rawDominant.toUpperCase();
+  statePill.textContent = dominant === 'none' ? 'NO FACE' : dominant.toUpperCase();
   statePill.className   = `state-pill ${dominant}`;
 
+  // ── FIX: Pass the correct 0–1 ratio to the ring ──
   updateRiskRing(drowsyRatio);
-  checkDrowsiness(drowsyRatio);   // pass ratio, not per-frame boolean
-  triggerGraduatedSound(drowsyRatio);
+
+  // Time-based drowsiness engine
+  checkDrowsiness(dominant === 'drowsy');
+
+  // Sound trigger when risk ratio crosses 60 %
+  const now = Date.now();
+  if (drowsyRatio > 0.6 && now - lastAlertTime > ALERT_COOLDOWN) {
+    playAlert('alert');
+    lastAlertTime = now;
+  }
 
   if (dominant !== 'none') {
-    addLog(dominant, `${dominant.toUpperCase()} — risk: ${Math.round(drowsyRatio * 100)}%`);
+    addLog(dominant, `${dominant.toUpperCase()} detected — risk: ${Math.round(drowsyRatio * 100)}%`);
   }
 }
 
@@ -450,28 +382,10 @@ function clearOverlay() {
 }
 
 // ─────────────────────────────────────────────────────
-//  TIME-BASED DROWSINESS ENGINE (ratio-driven)
-//
-//  isDrowsy = ratio > 0.40 (40%+ of recent frames drowsy)
-//  isClear  = ratio < 0.20 (clearly awake → instant reset)
-//
-//  Prevents CRITICAL banner getting STUCK when occasional
-//  single drowsy frames keep resetting graceCount.
+//  TIME-BASED DROWSINESS ENGINE WITH GRACE PERIOD
 // ─────────────────────────────────────────────────────
-function checkDrowsiness(drowsyRatio) {
-  const now      = Date.now();
-  const isDrowsy = drowsyRatio > 0.40;
-  const isClear  = drowsyRatio < 0.20;
-
-  // Instant clear: ratio well below danger zone → reset immediately
-  if (isClear && !['none', 'safe'].includes(currentLevel)) {
-    drowsyStartTime = null; graceCount = 0;
-    addLog('awake', '✔ Cleared — driver is awake');
-    currentLevel = 'safe';
-    resetUIState(); showSafeUI();
-    stopAllAlerts();
-    return;
-  }
+function checkDrowsiness(isDrowsy) {
+  const now = Date.now();
 
   if (isDrowsy) {
     graceCount = 0;
@@ -482,7 +396,7 @@ function checkDrowsiness(drowsyRatio) {
       if (currentLevel !== 'critical') {
         currentLevel = 'critical';
         activateCriticalUI();
-        addLog('critical', '🚨 CRITICAL — 5s+ drowsiness!');
+        addLog('critical', '🚨 CRITICAL — 5s+ drowsiness detected!');
       }
       if (now - lastAlertTime > ALERT_COOLDOWN) {
         playAlert('critical');
@@ -493,7 +407,7 @@ function checkDrowsiness(drowsyRatio) {
       if (currentLevel !== 'alert') {
         currentLevel = 'alert';
         activateAlertUI();
-        addLog('drowsy', '⚠ ALERT — 3s drowsiness');
+        addLog('drowsy', '⚠ ALERT — 3s drowsiness detected');
       }
       if (now - lastAlertTime > ALERT_COOLDOWN) {
         playAlert('alert');
@@ -513,11 +427,10 @@ function checkDrowsiness(drowsyRatio) {
     }
 
   } else {
-    // Ratio 20–40%: use grace period to avoid flicker
     graceCount++;
     if (graceCount >= GRACE_FRAMES && drowsyStartTime !== null) {
       drowsyStartTime = null; graceCount = 0;
-      if (!['none', 'safe'].includes(currentLevel)) addLog('awake', '✔ Cleared — driver awake');
+      if (!['none','safe'].includes(currentLevel)) addLog('awake', '✓ Cleared — driver awake');
       currentLevel = 'safe';
       resetUIState(); showSafeUI();
     } else if (currentLevel === 'none') {
@@ -525,7 +438,6 @@ function checkDrowsiness(drowsyRatio) {
     }
   }
 }
-
 
 // ── UI states ─────────────────────────────────────────
 function showSafeUI() {
@@ -600,36 +512,37 @@ function setStatusMsg(cls, icon, txt) {
 //  circumference = 2 * π * r = 2 * π * 50 ≈ 314.16
 // ─────────────────────────────────────────────────────
 function updateRiskRing(ratio) {
+  // Clamp to [0, 1]
   ratio = Math.max(0, Math.min(1, ratio));
-  ringFill.style.strokeDashoffset = (314 - ratio * 314).toFixed(1);
+
+  const CIRC = 314; // circumference for r=50
+  // offset 314 = empty, offset 0 = full
+  const offset = CIRC - (ratio * CIRC);
+  ringFill.style.strokeDashoffset = offset.toFixed(1);
+
+  // Update percentage text
   riskPercent.textContent = `${Math.round(ratio * 100)}%`;
 
-  // Direct style assignment — guaranteed to work on SVG elements
+  // Color thresholds
   if (ratio < 0.35) {
-    ringFill.style.stroke = '#00ff88';
-    ringFill.style.filter = 'drop-shadow(0 0 8px rgba(0,255,136,0.6))';
-    riskSub.style.color   = '#00ff88';
-    riskSub.textContent   = 'safe';
+    ringFill.className = 'ring-fill';
+    riskSub.style.color = 'var(--green)';
+    riskSub.textContent = 'safe';
   } else if (ratio < 0.6) {
-    ringFill.style.stroke = '#ffb800';
-    ringFill.style.filter = 'drop-shadow(0 0 8px rgba(255,184,0,0.7))';
-    riskSub.style.color   = '#ffb800';
-    riskSub.textContent   = 'caution';
+    ringFill.className = 'ring-fill medium';
+    riskSub.style.color = 'var(--amber)';
+    riskSub.textContent = 'caution';
   } else {
-    ringFill.style.stroke = '#ff2244';
-    ringFill.style.filter = 'drop-shadow(0 0 12px rgba(255,34,68,0.8))';
-    riskSub.style.color   = '#ff2244';
-    riskSub.textContent   = 'danger!';
+    ringFill.className = 'ring-fill high';
+    riskSub.style.color = 'var(--red)';
+    riskSub.textContent = 'danger!';
   }
 }
 
 // ── Stats from backend ────────────────────────────────
 async function pollStats() {
   try {
-    const r = await fetch(`${API_BASE}/stats`, { 
-      signal: AbortSignal.timeout(2000),
-      headers: { "Bypass-Tunnel-Reminder": "true" }
-    });
+    const r = await fetch(`${API_BASE}/stats`, { signal: AbortSignal.timeout(2000) });
     const d = await r.json();
     tileFrames.textContent  = d.total_frames;
     tileAwake.textContent   = `${d.awake_percent}%`;
@@ -661,13 +574,7 @@ function addLog(state, message) {
 
 // ── Reset session ─────────────────────────────────────
 async function resetSession() {
-  try { 
-    await fetch(`${API_BASE}/reset`, { 
-      method: 'POST', 
-      signal: AbortSignal.timeout(3000),
-      headers: { "Bypass-Tunnel-Reminder": "true" }
-    }); 
-  } catch (_) {}
+  try { await fetch(`${API_BASE}/reset`, { method: 'POST', signal: AbortSignal.timeout(3000) }); } catch (_) {}
   drowsyStartTime = null; currentLevel = 'none'; graceCount = 0;
   fpsHistory = []; lastAlertTime = 0; frontHistory = [];
   updateFPS(0); updateRiskRing(0);
